@@ -1,26 +1,107 @@
+use console::ransid::Color;
 use failure::Error;
+use std::convert::{TryFrom, TryInto};
+use std::error::Error as StdError;
+use std::fmt::Write;
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::{Read, Write as OtherWrite};
+use std::num::ParseIntError;
 use std::path::Path;
 use toml;
 use xdg::BaseDirectories;
 
-#[derive(Serialize, Deserialize)]
-pub struct Config {
-    pub font: String,
-    pub font_bold: String
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Hex(String);
+
+impl TryInto<Color> for Hex {
+    type Error = Box<dyn StdError>;
+
+    fn try_into(self) -> Result<Color, Self::Error> {
+        let hex = self.0.trim_start_matches("#");
+        let hex = decode_hex(hex)?;
+
+        Ok(Color::TrueColor(hex[0], hex[1], hex[2]))
+    }
 }
+
+impl From<Color> for Hex {
+    fn from(value: Color) -> Self {
+        fn encode_rgb(r: u8, g: u8, b: u8) -> String {
+            let mut hex = String::new();
+            write!(hex, "#{:02x}{:02x}{:02x}", r, g, b).unwrap();
+            hex
+        }
+
+        Hex(match value {
+            Color::TrueColor(r, g, b) => encode_rgb(r, g, b),
+            Color::Ansi(value) => match value {
+                0 => encode_rgb(0x00, 0x00, 0x00),
+                1 => encode_rgb(0x80, 0x00, 0x00),
+                2 => encode_rgb(0x00, 0x80, 0x00),
+                3 => encode_rgb(0x80, 0x80, 0x00),
+                4 => encode_rgb(0x00, 0x00, 0x80),
+                5 => encode_rgb(0x80, 0x00, 0x80),
+                6 => encode_rgb(0x00, 0x80, 0x80),
+                7 => encode_rgb(0xc0, 0xc0, 0xc0),
+                8 => encode_rgb(0x80, 0x80, 0x80),
+                9 => encode_rgb(0xff, 0x00, 0x00),
+                10 => encode_rgb(0x00, 0xff, 0x00),
+                11 => encode_rgb(0xff, 0xff, 0x00),
+                12 => encode_rgb(0x00, 0x00, 0xff),
+                13 => encode_rgb(0xff, 0x00, 0xff),
+                14 => encode_rgb(0x00, 0xff, 0xff),
+                15 => encode_rgb(0xff, 0xff, 0xff),
+                16..=231 => {
+                    let convert = |value: u8| -> u8 {
+                        match value {
+                            0 => 0,
+                            _ => value * 0x28 + 0x28,
+                        }
+                    };
+
+                    let r = convert((value - 16) / 36 % 6);
+                    let g = convert((value - 16) / 6 % 6);
+                    let b = convert((value - 16) % 6);
+                    encode_rgb(r, g, b)
+                }
+                232..=255 => {
+                    let gray = (value - 232) * 10 + 8;
+                    encode_rgb(gray, gray, gray)
+                }
+                _ => encode_rgb(0, 0, 0),
+            },
+        })
+    }
+}
+
+pub fn decode_hex(s: &str) -> Result<Vec<u8>, ParseIntError> {
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16))
+        .collect()
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct Config {
+    pub font: Option<String>,
+    pub font_bold: Option<String>,
+    pub background_color: Option<Hex>,
+}
+
 impl Default for Config {
     fn default() -> Self {
         Config {
-            font: String::new(),
-            font_bold: String::new()
+            font: None,
+            font_bold: None,
+            background_color: None,
         }
     }
 }
+
 impl Config {
     pub fn load() -> Result<Self, Error> {
         let xdg = BaseDirectories::with_prefix("orbterm")?;
+
         if let Some(path) = xdg.find_config_file("config") {
             Config::read(&path)
         } else {
@@ -34,7 +115,9 @@ impl Config {
     pub fn read<P: AsRef<Path>>(path: &P) -> Result<Self, Error> {
         let mut file = File::open(path)?;
         let mut contents = Vec::new();
+
         file.read_to_end(&mut contents)?;
+
         toml::from_slice(&contents).map_err(Error::from)
     }
 

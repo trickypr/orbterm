@@ -1,7 +1,9 @@
-extern crate ransid;
+pub extern crate ransid;
 
 use std::collections::BTreeSet;
+use std::convert::TryInto;
 use std::io::Result;
+use std::ops::Deref;
 use std::{cmp, mem, ptr};
 
 use config::Config;
@@ -57,6 +59,7 @@ pub struct Console {
     pub alpha: u8,
     pub selection: Option<(usize, usize)>,
     pub last_selection: Option<(usize, usize)>,
+    pub config: Config,
 }
 
 impl Console {
@@ -74,8 +77,19 @@ impl Console {
             }
         };
 
-        let ransid =
+        let mut ransid =
             ransid::Console::new(width as usize / block_width, height as usize / block_height);
+
+        // Theming config
+        if let Some(background) = &config.background_color {
+            ransid.state.background = background
+                .clone()
+                .try_into()
+                .expect("Failed to convert background_color to a valid color");
+            ransid.state.background_default = ransid.state.background.clone();
+
+            println!("background: {:?}", background);
+        }
 
         let mut window = Window::new_flags(
             -1,
@@ -106,36 +120,43 @@ impl Console {
 
         let alt_grid = grid.clone();
 
-        let font = Font::from_path(&config.font).unwrap_or_else(|_| {
-            let font = Font::find(Some("Mono"), None, Some("Regular"));
+        let font = if let Some(font_path) = &config.font {
+            Font::from_path(font_path).expect("Failed to load custom font")
+        } else {
+            let mut font = Font::find(Some("Mono"), None, Some("Regular"));
 
             if font.is_err() {
                 // Try the fallback fonts
-                for font in FALLBACK_REGULAR_FONTS.iter() {
-                    let font = Font::from_path(font);
-                    if font.is_ok() {
-                        return font.unwrap();
-                    }
+                for temp_font in FALLBACK_REGULAR_FONTS.iter() {
+                    let temp_font = Font::from_path(temp_font);
+                    if temp_font.is_ok() {
+                        font = temp_font;
+                        break;
+                    };
                 }
             }
 
             font.expect("Could not find a regular monospace font")
-        });
-        let font_bold = Font::from_path(&config.font_bold).unwrap_or_else(|_| {
-            let font = Font::find(Some("Mono"), None, Some("Bold"));
+        };
+
+        let font_bold = if let Some(font_path) = &config.font_bold {
+            Font::from_path(font_path).expect("Failed to load custom bold font")
+        } else {
+            let mut font = Font::find(Some("Mono"), None, Some("Regular"));
 
             if font.is_err() {
                 // Try the fallback fonts
-                for font in FALLBACK_BOLD_FONTS.iter() {
-                    let font = Font::from_path(font);
-                    if font.is_ok() {
-                        return font.unwrap();
-                    }
+                for temp_font in FALLBACK_BOLD_FONTS.iter() {
+                    let temp_font = Font::from_path(temp_font);
+                    if temp_font.is_ok() {
+                        font = temp_font;
+                        break;
+                    };
                 }
             }
 
-            font.expect("Cannot find a bold monospace font")
-        });
+            font.expect("Could not find a bold monospace font")
+        };
 
         Console {
             ransid,
@@ -159,6 +180,7 @@ impl Console {
             alpha,
             selection: None,
             last_selection: None,
+            config: config.clone(),
         }
     }
 
