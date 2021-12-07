@@ -118,7 +118,7 @@ impl Config {
         }
     }
 
-    fn get_config_path(&self, file_name: &str) -> Result<PathBuf, Error> {
+    pub fn get_config_path(file_name: &str) -> Result<PathBuf, Error> {
         let xdg = BaseDirectories::with_prefix("orbterm")?;
         Ok(xdg.place_config_file(file_name)?)
     }
@@ -139,7 +139,7 @@ impl Config {
     }
 
     pub fn get_initial_scale(&self, display_height: u32) -> Result<f32, Error> {
-        let config_path = self.get_config_path("scale")?;
+        let config_path = Config::get_config_path("scale")?;
 
         let scale = (display_height / 1600) + 1;
 
@@ -151,20 +151,16 @@ impl Config {
                 let scale = contents.parse::<f32>()?;
                 return Ok(scale);
             } else {
-                self.set_initial_scale(scale as f32)?;
+                Config::set_initial_scale(scale as f32)?;
             }
         }
 
         Ok(scale as f32)
     }
 
-    pub fn set_initial_scale(&self, scale: f32) -> Result<(), Error> {
-        let config_path = self.get_config_path("scale")?;
-
-        if self.save_scale.is_some() && self.save_scale.unwrap() {
-            fs::write(&config_path, scale.to_string())?;
-        }
-
+    pub fn set_initial_scale(scale: f32) -> Result<(), Error> {
+        let config_path = Self::get_config_path("scale")?;
+        fs::write(&config_path, scale.to_string())?;
         Ok(())
     }
 }

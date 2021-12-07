@@ -31,6 +31,7 @@ use handle::handle;
 use slave_stdio::slave_stdio;
 
 mod before_exec;
+mod block_handler;
 mod config;
 mod console;
 mod getpty;
