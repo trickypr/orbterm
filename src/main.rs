@@ -62,7 +62,7 @@ fn main() {
 
     let shell = user_specified_shell.unwrap_or(system_shell);
 
-    let (display_width, display_height) =
+    let (_display_width, display_height) =
         orbclient::get_display_size().expect("terminal: failed to get display size");
 
     let columns = config.columns.unwrap_or(DEFAULT_INITIAL_WIDTH);
@@ -76,20 +76,23 @@ fn main() {
     for arg in args {
         command.arg(arg);
     }
+
+    command
+        // Not setting COLUMNS and LINES fixes many applications that use it
+        // to quickly get the current terminal size instead of TIOCSWINSZ
+        .env("COLUMNS", "")
+        .env("LINES", "")
+        // It is useful to know if we are running inside of orbterm, some times
+        .env("ORBTERM_VERSION", env!("CARGO_PKG_VERSION"))
+        // We emulate xterm-256color
+        .env("TERM", "xterm-256color")
+        .env("TTY", tty_path);
+
     unsafe {
         command
             .stdin(Stdio::from_raw_fd(slave_stdin.as_raw_fd()))
             .stdout(Stdio::from_raw_fd(slave_stdout.as_raw_fd()))
             .stderr(Stdio::from_raw_fd(slave_stderr.as_raw_fd()))
-            // Not setting COLUMNS and LINES fixes many applications that use it
-            // to quickly get the current terminal size instead of TIOCSWINSZ
-            .env("COLUMNS", "")
-            .env("LINES", "")
-            // It is useful to know if we are running inside of orbterm, some times
-            .env("ORBTERM_VERSION", env!("CARGO_PKG_VERSION"))
-            // We emulate xterm-256color
-            .env("TERM", "xterm-256color")
-            .env("TTY", tty_path)
             .pre_exec(|| before_exec());
     }
 
