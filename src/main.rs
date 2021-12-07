@@ -1,4 +1,5 @@
-#[macro_use] extern crate serde_derive;
+#[macro_use]
+extern crate serde_derive;
 #[cfg(feature = "env_logger")]
 extern crate env_logger;
 extern crate failure;
@@ -16,11 +17,11 @@ extern crate redox_termios;
 #[cfg(target_os = "redox")]
 extern crate syscall;
 
-use std::{cmp, env, io};
 use std::io::Write;
 use std::os::unix::io::{AsRawFd, FromRawFd};
 use std::os::unix::process::CommandExt;
 use std::process::{Command, Stdio};
+use std::{cmp, env, io};
 
 use before_exec::before_exec;
 use config::Config;
@@ -36,8 +37,11 @@ mod getpty;
 mod handle;
 mod slave_stdio;
 
-const BLOCK_WIDTH: u32 = 8;
-const BLOCK_HEIGHT: u32 = BLOCK_WIDTH * 2;
+pub const BLOCK_WIDTH: u32 = 8;
+pub const BLOCK_HEIGHT: u32 = BLOCK_WIDTH * 2;
+
+const DEFAULT_INITIAL_WIDTH: u32 = 80;
+const DEFAULT_INITIAL_HEIGHT: u32 = 24;
 
 fn main() {
     #[cfg(feature = "env_logger")]
@@ -52,13 +56,21 @@ fn main() {
     };
 
     let mut args = env::args().skip(1);
-    let shell = args.next().unwrap_or(env::var("SHELL").unwrap_or("sh".to_string()));
 
-    let (display_width, display_height) = orbclient::get_display_size().expect("terminal: failed to get display size");
-    let (columns, lines) = (cmp::min(1024, display_width * 4/5) / BLOCK_WIDTH as u32, cmp::min(768, display_height * 4/5) / BLOCK_HEIGHT as u32);
+    let user_specified_shell = args.next();
+    let system_shell = env::var("SHELL").unwrap_or("/bin/sh".to_string());
 
-    let (master_fd, tty_path) = getpty(columns, lines);
-    let (slave_stdin, slave_stdout, slave_stderr) = slave_stdio(&tty_path).expect("terminal: failed to get slave stdio");
+    let shell = user_specified_shell.unwrap_or(system_shell);
+
+    let (display_width, display_height) =
+        orbclient::get_display_size().expect("terminal: failed to get display size");
+
+    let columns = config.columns.unwrap_or(DEFAULT_INITIAL_WIDTH);
+    let rows = config.rows.unwrap_or(DEFAULT_INITIAL_HEIGHT);
+
+    let (master_fd, tty_path) = getpty(columns, rows);
+    let (slave_stdin, slave_stdout, slave_stderr) =
+        slave_stdio(&tty_path).expect("terminal: failed to get slave stdio");
 
     let mut command = Command::new(&shell);
     for arg in args {
@@ -66,21 +78,19 @@ fn main() {
     }
     unsafe {
         command
-        .stdin(Stdio::from_raw_fd(slave_stdin.as_raw_fd()))
-        .stdout(Stdio::from_raw_fd(slave_stdout.as_raw_fd()))
-        .stderr(Stdio::from_raw_fd(slave_stderr.as_raw_fd()))
-        // Not setting COLUMNS and LINES fixes many applications that use it
-        // to quickly get the current terminal size instead of TIOCSWINSZ
-        .env("COLUMNS", "")
-        .env("LINES", "")
-        // It is useful to know if we are running inside of orbterm, some times
-        .env("ORBTERM_VERSION", env!("CARGO_PKG_VERSION"))
-        // We emulate xterm-256color
-        .env("TERM", "xterm-256color")
-        .env("TTY", tty_path)
-        .pre_exec(|| {
-            before_exec()
-        });
+            .stdin(Stdio::from_raw_fd(slave_stdin.as_raw_fd()))
+            .stdout(Stdio::from_raw_fd(slave_stdout.as_raw_fd()))
+            .stderr(Stdio::from_raw_fd(slave_stderr.as_raw_fd()))
+            // Not setting COLUMNS and LINES fixes many applications that use it
+            // to quickly get the current terminal size instead of TIOCSWINSZ
+            .env("COLUMNS", "")
+            .env("LINES", "")
+            // It is useful to know if we are running inside of orbterm, some times
+            .env("ORBTERM_VERSION", env!("CARGO_PKG_VERSION"))
+            // We emulate xterm-256color
+            .env("TERM", "xterm-256color")
+            .env("TTY", tty_path)
+            .pre_exec(|| before_exec());
     }
 
     match command.spawn() {
@@ -89,20 +99,32 @@ fn main() {
             drop(slave_stdout);
             drop(slave_stdin);
 
-            let scale = (display_height / 1600) + 1;
-            let (block_width, block_height) = (BLOCK_WIDTH * scale, BLOCK_HEIGHT * scale);
+            let scale = config
+                .get_initial_scale(display_height)
+                .expect("Failed to retrieve the default scale");
+            let (block_width, block_height) = (
+                (BLOCK_WIDTH as f32 * scale) as u32,
+                (BLOCK_HEIGHT as f32 * scale) as u32,
+            );
 
             let mut console = Console::new(
                 &config,
-                columns * block_width as u32, lines * block_height as u32,
-                block_width as usize, block_height as usize
+                columns * block_width as u32,
+                rows * block_height as u32,
+                block_width as usize,
+                block_height as usize,
             );
+
             handle(&mut console, master_fd, &mut process);
-        },
+        }
         Err(err) => {
             let term_stderr = io::stderr();
             let mut term_stderr = term_stderr.lock();
-            let _ = writeln!(term_stderr, "terminal: failed to execute '{}': {:?}", shell, err);
+            let _ = writeln!(
+                term_stderr,
+                "terminal: failed to execute '{}': {:?}",
+                shell, err
+            );
         }
     }
 }

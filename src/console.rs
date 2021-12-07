@@ -10,6 +10,8 @@ use config::Config;
 use orbclient::{Color, EventOption, Mode, Renderer, Window, WindowFlag};
 use orbfont::Font;
 
+use crate::BLOCK_WIDTH;
+
 // Note that fonts can be located in either /usr/share/fonts/TTF or
 // /usr/share/fonts/truetype/ depending on the distro
 
@@ -808,7 +810,7 @@ impl Console {
         }
     }
 
-    fn set_block_size(&mut self, block_width: usize) {
+    pub fn set_block_size(&mut self, block_width: usize) {
         self.block_width = if block_width < 4 {
             4
         } else if block_width > 48 {
@@ -817,6 +819,9 @@ impl Console {
             block_width
         };
         self.block_height = self.block_width * 2;
+
+        let scale = self.block_width as f32 / BLOCK_WIDTH as f32;
+        self.config.set_initial_scale(scale).unwrap();
     }
 
     fn sync(&mut self) {

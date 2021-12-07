@@ -3,10 +3,10 @@ use failure::Error;
 use std::convert::{TryFrom, TryInto};
 use std::error::Error as StdError;
 use std::fmt::Write;
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{Read, Write as OtherWrite};
 use std::num::ParseIntError;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use toml;
 use xdg::BaseDirectories;
 
@@ -86,6 +86,9 @@ pub struct Config {
     pub font: Option<String>,
     pub font_bold: Option<String>,
     pub background_color: Option<Hex>,
+    pub save_scale: Option<bool>,
+    pub columns: Option<u32>,
+    pub rows: Option<u32>,
 }
 
 impl Default for Config {
@@ -94,6 +97,9 @@ impl Default for Config {
             font: None,
             font_bold: None,
             background_color: None,
+            save_scale: Some(true),
+            columns: None,
+            rows: None,
         }
     }
 }
@@ -112,6 +118,11 @@ impl Config {
         }
     }
 
+    fn get_config_path(&self, file_name: &str) -> Result<PathBuf, Error> {
+        let xdg = BaseDirectories::with_prefix("orbterm")?;
+        Ok(xdg.place_config_file(file_name)?)
+    }
+
     pub fn read<P: AsRef<Path>>(path: &P) -> Result<Self, Error> {
         let mut file = File::open(path)?;
         let mut contents = Vec::new();
@@ -125,5 +136,35 @@ impl Config {
         let contents = toml::to_string_pretty(&self)?;
         let mut file = File::create(path)?;
         file.write_all(contents.as_bytes()).map_err(Error::from)
+    }
+
+    pub fn get_initial_scale(&self, display_height: u32) -> Result<f32, Error> {
+        let config_path = self.get_config_path("scale")?;
+
+        let scale = (display_height / 1600) + 1;
+
+        if self.save_scale.is_some() && self.save_scale.unwrap() {
+            if config_path.exists() {
+                let mut file = File::open(&config_path)?;
+                let mut contents = String::new();
+                file.read_to_string(&mut contents)?;
+                let scale = contents.parse::<f32>()?;
+                return Ok(scale);
+            } else {
+                self.set_initial_scale(scale as f32)?;
+            }
+        }
+
+        Ok(scale as f32)
+    }
+
+    pub fn set_initial_scale(&self, scale: f32) -> Result<(), Error> {
+        let config_path = self.get_config_path("scale")?;
+
+        if self.save_scale.is_some() && self.save_scale.unwrap() {
+            fs::write(&config_path, scale.to_string())?;
+        }
+
+        Ok(())
     }
 }
